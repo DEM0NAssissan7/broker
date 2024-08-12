@@ -1,3 +1,6 @@
+/* General Constants */
+const DECK_SIZE = 52;
+
 /* Kinds of cards: i.e 2, 3, ..., J, Q, K, A */
 const TWO = 2;
 const THREE = 3;
@@ -85,16 +88,14 @@ class Hand {
             cards.push(new Card(card.kind, card.suit));
         return new Hand(cards);
     }
-    get_value() {
-        let rank = HIGH_CARD;
-        let score = this.highest();
+    get_possible_wins() {
+        let wins = [];
         let test = (_rank, val) => {
-            if (val) {
-                rank = _rank;
-                score = val;
-            }
+            if (val)
+                wins[_rank] = val;
         }
         let old_cards = clone_card_array(this.cards);
+        test(HIGH_CARD, this.highest());
         test(PAIR, this.pair());
         test(TWO_PAIR, this.two_pair());
         test(THREE_OF_A_KIND, this.three_of_a_kind());
@@ -105,6 +106,18 @@ class Hand {
         test(STRAIGHT_FLUSH, this.straight_flush());
         test(ROYAL_FLUSH, this.royal_flush());
         this.cards = old_cards;
+        return wins;
+    }
+    get_value() {
+        let rank = HIGH_CARD;
+        let score = this.highest();
+        let wins = this.get_possible_wins();
+        for(let i = HIGH_CARD; i < ROYAL_FLUSH; i++) {
+            if(wins[i]) {
+                rank = i;
+                score = wins[i];
+            }
+        }
         return {
             rank: rank,
             score: score
@@ -168,14 +181,19 @@ class Hand {
     two_pair() {
         let score = 0;
         let matches = this.get_matches();
+        let pairs = 0;
 
         for (let i = 0; i < matches.length; i++) {
             let kind = i;
             let match_count = matches[i];
-            if (match_count >= 1)
-                score += kind;
+            if (match_count >= 1) {
+                score = Math.max(score, kind);
+                pairs++;
+            }
         }
-        return score;
+        if(pairs === 2)
+            return score;
+        return 0;
     }
     three_of_a_kind() {
         return this.common_kinds(2);
@@ -215,7 +233,7 @@ class Hand {
             let kind = i;
             let match_count = matches[i];
             if (match_count === threshold) {
-                score += kind;
+                score = Math.max(score, kind);
                 threshold++;
                 break;
             }
@@ -228,7 +246,7 @@ class Hand {
             let kind = i;
             let match_count = matches[i];
             if (match_count === threshold) {
-                score += kind;
+                score = Math.max(score, kind);
                 success = true;
             }
         }
@@ -292,15 +310,17 @@ function _draw() {
 
 /* Players */
 class Player {
-    constructor(skip_draw) {
+    constructor(skip_draw, cards) {
         if(!skip_draw) {
             this.card1 = _draw();
             this.card2 = _draw();
             this.hand = new Hand([this.card1, this.card2]);
-        } else {
+        } else if(!cards){
             this.card1 = null;
             this.card2 = null;
             this.hand = new Hand([]);
+        } else if (cards) {
+            this.replace_cards(cards);
         }
         this.bet = 0;
         this.id = players.length;
@@ -316,36 +336,57 @@ class Player {
     }
     remove_card() {
         if(this.hand.cards.length === 0) return;
-        if(this.card2)
+        let card;
+        if(this.card2) {
+            card = this.card2;
             this.card2 = null;
-        else
+        } else {
+            card = this.card1;
             this.card1 = null;
+        }
         this.hand.cards.splice(this.hand.cards.length - 1, 1);
         this.hand.update();
+        return card;
     }
-    test_hand(_hand_) {
-        let _hand = _hand_.clone();
+    all_possible_hands(_hand) {
+        let hands = [];
         for(let i = 0; i < _hand.cards.length; i++) {
             for(let j = 0; j < _hand.cards.length; j++) {
-                let hand = _hand_.clone();
+                let hand = _hand.clone();
                 hand.cards[i] = this.card1;
                 hand.cards[j] = this.card2;
                 hand.update();
-                if(hand.is_better_hand(_hand))
-                    _hand = hand;
+                hands.push(hand);
             }
+        }
+        return hands;
+    }
+    rank_score(rank) {
+        let score = 0;
+        let hands = this.all_possible_hands(community_hand.clone());
+        for(let hand of hands)
+            if(hand.value.rank === rank && hand.value.score > score)
+                score = hand.value.score;
+        return score;
+    }
+    test_hand(_hand_) {
+        let _hand = _hand_;
+        let hands = this.all_possible_hands(_hand_);
+        for(let hand of hands) {
+            if(hand.is_better_hand(_hand))
+                _hand = hand;
         }
         return _hand;
     }
     best_hand() {
         let hand = community_hand.clone();
-        // Normalize input to 5
-        if(hand.cards.length < 5)
-            for(let i = 0; i < 5 - hand.cards.length; i++)
-                hand.cards.push(deck[i]);
-        hand.update();
         let best_hand = this.test_hand(hand);
         return best_hand;
+    }
+    replace_cards(cards) {
+        this.card1 = cards[0];
+        this.card2 = cards[1];
+        this.hand = new Hand(cards);
     }
 }
 
@@ -364,10 +405,13 @@ function finish_game() {
 }
 function find_best_player() {
     let player = players[0];
+    let best_hand = player.best_hand();
     for(let i = 1; i < players.length; i++) {
         let next_player = players[i];
-        if(next_player.hand.is_better_hand(player.hand))
+        if(next_player.best_hand().is_better_hand(best_hand)) {
             player = next_player;
+            best_hand = player.best_hand();
+        }
     }
     return player;
 }
